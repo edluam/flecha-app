@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2933">
+<link rel="manifest" href="manifest.json">
+<title>Flecha techos</title>
+<!--
+  App del móvil del captador de flecha (VA074, techos suspendidos).
+  Recibe del ESP32, por Bluetooth LE (servicio UART de Nordic), una línea por
+  segundo «seq;cociente;mm;estado». El operario marca a mano el escalón de
+  carga; al terminar, exporta el TXT que lee app/ensayos/techos_suspendidos.py:
+      # Zona 1: Sala de espera
+      Tiempo_s;Fuerza_kg;Deformacion_mm
+      0;5;0,000
+  Web Bluetooth solo funciona en Chrome de Android y desde HTTPS. Tras la
+  primera carga, sw.js la deja guardada y funciona sin internet.
+  Modo demostración: añadir ?demo a la dirección (simula el captador).
+-->
+<style>
+:root{--fondo:#f4f5f7;--txt:#1f2933;--gris:#7b8794;--tarjeta:#fff;--azul:#2563eb;--verde:#15803d;--ambar:#b45309;--rojo:#b91c1c;--borde:#d9dde3}
+@media (prefers-color-scheme:dark){:root{--fondo:#111418;--txt:#e6e8eb;--gris:#9aa5b1;--tarjeta:#1c2127;--borde:#323a44}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fondo);color:var(--txt);font:16px/1.35 system-ui,-apple-system,Roboto,sans-serif;padding:12px 12px 90px}
+h1{font-size:18px;margin:0 0 8px}
+.tarjeta{background:var(--tarjeta);border:1px solid var(--borde);border-radius:12px;padding:12px;margin-bottom:10px}
+.fila{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+label{font-size:13px;color:var(--gris);display:block;margin-bottom:2px}
+input{font:inherit;padding:8px;border:1px solid var(--borde);border-radius:8px;width:100%;background:var(--fondo);color:var(--txt)}
+.campo{flex:1 1 120px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 14px;background:var(--azul);color:#fff}
+button.sec{background:var(--borde);color:var(--txt)}
+button.rojo{background:var(--rojo)}
+button:disabled{opacity:.4}
+#lectura{font-size:64px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+#estado{text-align:center;font-size:14px;color:var(--gris)}
+#panel{transition:background .3s}
+#panel.estable{background:#dcfce7}#panel.moviendo{background:#fef3c7}
+@media (prefers-color-scheme:dark){#panel.estable{background:#12351f}#panel.moviendo{background:#3a2c0b}}
+.escalones{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.escalones button{padding:14px 0;background:var(--borde);color:var(--txt)}
+.escalones button.actual{background:var(--azul);color:#fff}
+.escalones button.hecho{background:var(--verde);color:#fff}
+#grande{width:100%;font-size:22px;padding:18px;margin-top:8px}
+.datos{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center}
+.datos b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.datos span{font-size:12px;color:var(--gris)}
+canvas{width:100%;height:180px;display:block}
+.aviso{color:var(--ambar);font-size:14px;margin:6px 0 0}
+#barra{position:fixed;left:0;right:0;bottom:0;background:var(--tarjeta);border-top:1px solid var(--borde);padding:10px 12px;display:flex;gap:8px}
+#barra button{flex:1}
+</style>
+</head>
+<body>
+<h1>Prueba de carga · techos suspendidos</h1>
+
+<div class="tarjeta">
+  <div class="fila">
+    <button id="bConectar">Conectar captador</button>
+    <span id="conexion" style="font-size:14px;color:var(--gris)">Sin conectar</span>
+  </div>
+  <p class="aviso" id="avisoCal" hidden></p>
+</div>
+
+<div class="tarjeta">
+  <div class="fila">
+    <div class="campo"><label>Obra</label><input id="obra" inputmode="numeric"></div>
+    <div class="campo"><label>Zona nº</label><input id="zona" inputmode="numeric" value="1"></div>
+  </div>
+  <div class="fila" style="margin-top:6px">
+    <div class="campo" style="flex-basis:100%"><label>Localización</label><input id="local" placeholder="Sala de espera"></div>
+  </div>
+</div>
+
+<div class="tarjeta" id="panel">
+  <div id="lectura">––</div>
+  <div id="estado">mm · esperando lecturas</div>
+  <div class="datos" style="margin-top:8px">
+    <div><b id="dCarga">–</b><span>carga kg</span></div>
+    <div><b id="dTiempo">–</b><span>en escalón</span></div>
+    <div><b id="dVar">–</b><span>Δ 30 s (mm)</span></div>
+  </div>
+</div>
+
+<div class="tarjeta">
+  <label>Escalones (toca uno para saltar a él)</label>
+  <div class="escalones" id="escalones"></div>
+  <button id="grande" disabled>Empezar: colgar 5 kg</button>
+  <p class="aviso" style="color:var(--gris)">El cero de flecha se toma al pasar de la precarga de 5 kg al escalón de 15 kg.</p>
+</div>
+
+<div class="tarjeta"><canvas id="grafica"></canvas></div>
+
+<div id="barra">
+  <button class="sec" id="bExportar" disabled>Exportar TXT</button>
+  <button class="rojo" id="bNuevo">Nueva zona</button>
+</div>
+
+<script>
+"use strict";
+const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const PROGRAMA = [5, 15, 25, 15, 5];
+const VENTANA_S = 30, UMBRAL_MM = 0.02, DURACION_S = 180;
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------- estado
+let E = cargar() || nuevoEnsayo();
+let ultimo = null, rx = null, bufer = "", info = "";
+function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null}; }
+function guardar(){ try{ localStorage.setItem("flecha", JSON.stringify({E, obra:$("obra").value, zona:$("zona").value, local:$("local").value})); }catch(e){} }
+function cargar(){
+  try{ const g = JSON.parse(localStorage.getItem("flecha")); if(!g) return null;
+    setTimeout(()=>{ $("obra").value=g.obra||""; $("zona").value=g.zona||"1"; $("local").value=g.local||""; },0);
+    return g.E; }catch(e){ return null; }
+}
+
+// ------------------------------------------------------------- Bluetooth
+$("bConectar").onclick = async () => {
+  if (location.search.includes("demo")) { demo(); return; }
+  if (!navigator.bluetooth) { alert("Este navegador no tiene Bluetooth web. Usa Chrome en Android y abre la app desde su dirección https."); return; }
+  try {
+    const disp = await navigator.bluetooth.requestDevice({filters:[{namePrefix:"FLECHA"}], optionalServices:[NUS]});
+    disp.addEventListener("gattserverdisconnected", () => { conexion("Desconectado · reconectando…", true); reconectar(disp); });
+    await enlazar(disp);
+  } catch (e) { conexion("No conectado: " + e.message, true); }
+};
+async function enlazar(disp){
+  const srv = await disp.gatt.connect();
+  const s = await srv.getPrimaryService(NUS);
+  const tx = await s.getCharacteristic(NUS_TX);
+  rx = await s.getCharacteristic(NUS_RX);
+  tx.addEventListener("characteristicvaluechanged", ev => recibir(new TextDecoder().decode(ev.target.value)));
+  await tx.startNotifications();
+  conexion("Conectado a " + disp.name);
+  try { await rx.writeValue(new TextEncoder().encode("INFO\n")); } catch(e){}
+}
+async function reconectar(disp){
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try { await enlazar(disp); return; } catch(e){}
+  }
+  conexion("Perdido. Pulsa Conectar.", true);
+}
+function conexion(t, mal){ $("conexion").textContent = t; $("conexion").style.color = mal ? "var(--rojo)" : "var(--verde)"; }
+
+function recibir(trozo){
+  bufer += trozo;
+  let i;
+  while ((i = bufer.indexOf("\n")) >= 0) { linea(bufer.slice(0, i).trim()); bufer = bufer.slice(i + 1); }
+}
+function linea(l){
+  if (!l) return;
+  if (l.startsWith("#INFO")) {
+    info = l.slice(1);
+    const sinCal = l.includes("SIN_CALIBRAR");
+    $("avisoCal").hidden = !sinCal;
+    $("avisoCal").textContent = "El captador no tiene calibración cargada: las lecturas son nominales.";
+    return;
+  }
+  const [seq, q, mm, est] = l.split(";");
+  const n = parseInt(seq, 10);
+  if (E.ultSeq !== null && n > E.ultSeq + 1 && E.inicio !== null) E.perdidas += n - E.ultSeq - 1;
+  E.ultSeq = n;
+  if (mm === "" || mm === undefined) { $("estado").textContent = "captador sin dato (" + est + ")"; return; }
+  lectura(parseFloat(mm));
+}
+
+// ----------------------------------------------------------------- ensayo
+function lectura(mmAbs){
+  ultimo = mmAbs;
+  const ahora = Date.now() / 1000;
+  if (E.inicio !== null && E.escalon >= 0 && E.escalon < PROGRAMA.length) {
+    E.filas.push([Math.round(ahora - E.inicio), PROGRAMA[E.escalon], mmAbs]);
+    guardar();
+  }
+  pintar();
+}
+function flechaRel(mmAbs){ return E.cero === null ? 0 : mmAbs - E.cero; }
+
+function irAEscalon(k){
+  const ahora = Date.now() / 1000;
+  if (E.inicio === null) E.inicio = ahora;
+  // cero al terminar la precarga: última lectura del escalón de 5 kg
+  if (E.escalon === 0 && k >= 1 && E.cero === null && ultimo !== null) E.cero = ultimo;
+  E.escalon = k; E.tEscalon = ahora;
+  if (navigator.vibrate) navigator.vibrate(80);
+  guardar(); pintar();
+}
+$("grande").onclick = () => {
+  if (E.escalon < PROGRAMA.length - 1) irAEscalon(E.escalon + 1);
+  else { E.escalon = PROGRAMA.length; guardar(); pintar(); }
+};
+
+function variacion(){
+  const f = E.filas.filter(r => r[1] === PROGRAMA[E.escalon]);
+  if (f.length < 2) return null;
+  const tf = f[f.length - 1][0];
+  const dentro = f.filter(r => r[0] >= tf - VENTANA_S);
+  if (tf - dentro[0][0] < VENTANA_S - 1) return null;
+  return Math.abs(dentro[dentro.length - 1][2] - dentro[0][2]);
+}
+
+function pintar(){
+  $("lectura").textContent = ultimo === null ? "––" : fmt(E.cero === null ? ultimo : flechaRel(ultimo), 3);
+  $("estado").textContent = E.cero === null ? "mm · lectura absoluta (cero pendiente)" : "mm · flecha desde el cero" + (E.perdidas ? " · " + E.perdidas + " s perdidos" : "");
+  const enCurso = E.escalon >= 0 && E.escalon < PROGRAMA.length;
+  $("dCarga").textContent = enCurso ? PROGRAMA[E.escalon] : "–";
+  const dt = enCurso ? Math.round(Date.now()/1000 - E.tEscalon) : null;
+  $("dTiempo").textContent = dt === null ? "–" : Math.floor(dt/60) + ":" + String(dt%60).padStart(2,"0");
+  const v = enCurso ? variacion() : null;
+  $("dVar").textContent = v === null ? "–" : fmt(v, 3);
+  const estable = v !== null && v <= UMBRAL_MM && dt >= DURACION_S;
+  $("panel").className = !enCurso ? "" : (estable ? "estable" : "moviendo");
+  if (estable && !pintar.avisado) { pintar.avisado = true; if (navigator.vibrate) navigator.vibrate([200,100,200]); }
+  if (!estable) pintar.avisado = false;
+
+  const g = $("grande");
+  g.disabled = ultimo === null || E.escalon >= PROGRAMA.length;
+  if (E.escalon < 0) g.textContent = "Empezar: colgar 5 kg";
+  else if (E.escalon < PROGRAMA.length - 1) g.textContent = "Siguiente: " + PROGRAMA[E.escalon+1] + " kg" + (estable ? " ✓" : "");
+  else if (E.escalon === PROGRAMA.length - 1) g.textContent = "Terminar ensayo";
+  else g.textContent = "Ensayo terminado";
+  const bs = $("escalones").children;
+  for (let k = 0; k < bs.length; k++) bs[k].className = k === E.escalon ? "actual" : (k < E.escalon ? "hecho" : "");
+  $("bExportar").disabled = E.filas.length === 0;
+  grafica();
+}
+function fmt(x, d){ return x.toFixed(d).replace(".", ","); }
+
+PROGRAMA.forEach((kg, k) => {
+  const b = document.createElement("button"); b.textContent = kg;
+  b.onclick = () => { if (ultimo !== null && confirm("¿Pasar al escalón " + (k+1) + " (" + kg + " kg)?")) irAEscalon(k); };
+  $("escalones").appendChild(b);
+});
+
+// ---------------------------------------------------------------- gráfica
+function grafica(){
+  const c = $("grafica"), r = c.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  c.width = r.width * dpr; c.height = r.height * dpr;
+  const x = c.getContext("2d"); x.scale(dpr, dpr);
+  const W = r.width, H = r.height, f = E.filas;
+  x.clearRect(0,0,W,H);
+  if (f.length < 2) return;
+  const t1 = f[f.length-1][0] || 1, base = E.cero === null ? f[0][2] : E.cero;
+  const ys = f.map(p => p[2] - base); let lo = Math.min(0, ...ys), hi = Math.max(0.1, ...ys);
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const X = t => 30 + (W - 36) * t / t1, Y = v => H - 16 - (H - 24) * (v - lo) / (hi - lo);
+  const col = getComputedStyle(document.body).color;
+  x.fillStyle = col; x.font = "11px system-ui"; x.globalAlpha = .6;
+  x.fillText(fmt(hi,2), 0, 12); x.fillText(fmt(lo,2), 0, H-18); x.fillText(t1 + " s", W-40, H-2);
+  x.globalAlpha = 1; x.strokeStyle = "#2563eb"; x.lineWidth = 1.5; x.beginPath();
+  f.forEach((p, i) => { const px = X(p[0]), py = Y(p[2] - base); i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.stroke();
+}
+
+// --------------------------------------------------------------- exportar
+function nombreFichero(){
+  const loc = ($("local").value || "").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase().replace(/[^A-Z0-9]+/g,"_").replace(/^_|_$/g,"");
+  const obra = $("obra").value ? "O" + $("obra").value + "_" : "";
+  return obra + "Prueba_Carga_Zona_" + ($("zona").value || "1") + (loc ? "_" + loc : "") + ".txt";
+}
+function texto(){
+  const zona = $("zona").value || "1", loc = $("local").value || "";
+  const L = ["# Zona " + zona + ": " + loc,
+    "# Captador de flecha propio (" + (info || "sin INFO") + "); carga marcada a mano en el móvil",
+    "# Cero de deformación al finalizar la precarga de 5 kg" + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""),
+    "Tiempo_s;Fuerza_kg;Deformacion_mm"];
+  const cero = E.cero === null ? 0 : E.cero;
+  for (const [t, kg, mm] of E.filas) {
+    L.push(t + ";" + kg + ";" + fmt(precarga(t) ? 0 : mm - cero, 3));
+  }
+  return L.join("\r\n") + "\r\n";
+}
+// Durante la precarga la flecha se exporta a 0, como el DATALOG (el cero se toma al acabarla).
+function precarga(t){ const p = E.filas.find(r => r[1] !== 5); return p ? t < p[0] : true; }
+
+$("bExportar").onclick = async () => {
+  const nombre = nombreFichero(), blob = new Blob([texto()], {type:"text/plain"});
+  const fichero = new File([blob], nombre, {type:"text/plain"});
+  if (navigator.canShare && navigator.canShare({files:[fichero]})) {
+    try { await navigator.share({files:[fichero], title:nombre}); return; } catch(e) { if (e.name === "AbortError") return; }
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nombre; a.click();
+};
+$("bNuevo").onclick = () => {
+  if (E.filas.length && !confirm("Se borra el registro de esta zona del móvil. ¿Lo has exportado?")) return;
+  E = nuevoEnsayo(); $("zona").value = String((parseInt($("zona").value,10)||0) + 1); $("local").value = "";
+  guardar(); pintar();
+};
+["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
+
+// ------------------------------------------------------------------ demo
+function demo(){
+  conexion("Modo demostración"); info = "INFO;demo"; let s = 0, pos = 42;
+  setInterval(() => {
+    const kg = E.escalon >= 0 && E.escalon < PROGRAMA.length ? PROGRAMA[E.escalon] : 0;
+    const objetivo = 42 + kg * 0.06 + (E.escalon >= 3 ? 0.15 : 0);
+    pos += (objetivo - pos) * 0.08 + (Math.random() - .5) * 0.004;
+    linea(s++ + ";" + (pos/100).toFixed(7) + ";" + pos.toFixed(4) + ";OK");
+  }, 1000);
+}
+
+setInterval(pintar, 1000);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+pintar();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "Flecha techos suspendidos",
+  "short_name": "Flecha",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#1f2933",
+  "theme_color": "#1f2933",
+  "icons": [{"src": "icono.svg", "sizes": "any", "type": "image/svg+xml"}]
+}
