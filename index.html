@@ -90,7 +90,7 @@ canvas{width:100%;height:180px;display:block}
   <button id="grande" disabled>Empezar: colgar 5 kg</button>
   <div style="margin-top:10px"><label for="modoCero">Cero de flecha</label>
     <select id="modoCero">
-      <option value="inicio">Al empezar el escalón de 5 kg</option>
+      <option value="30s">A los 30 s de empezar el escalón de 5 kg</option>
       <option value="precarga">Al acabar la precarga (paso de 5 a 15 kg)</option>
     </select></div>
 </div>
@@ -115,8 +115,10 @@ const $ = id => document.getElementById(id);
 // ---------------------------------------------------------------- estado
 let E = cargar() || nuevoEnsayo();
 let ultimo = null, rx = null, bufer = "", info = "";
-function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null, modoCero:"inicio"}; }
-function modoCero(){ return E.modoCero || "precarga"; }   // registros guardados antes de existir la opción
+function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null, modoCero:"30s"}; }
+const CERO_S = 30;   // el cero automático se pone a los 30 s de empezar el escalón de 5 kg
+function modoCero(){ const m = E.modoCero || "precarga"; return m === "inicio" ? "30s" : m; }   // registros guardados con versiones anteriores
+function ponerCero(ahora){ E.cero = ultimo; E.tCero = Math.round(ahora - E.inicio); if (navigator.vibrate) navigator.vibrate([100,60,100]); }
 function guardar(){ try{ localStorage.setItem("flecha", JSON.stringify({E, obra:$("obra").value, zona:$("zona").value, local:$("local").value})); }catch(e){} }
 function cargar(){
   try{ const g = JSON.parse(localStorage.getItem("flecha")); if(!g) return null;
@@ -179,6 +181,7 @@ function linea(l){
 function lectura(mmAbs){
   ultimo = mmAbs;
   const ahora = Date.now() / 1000;
+  if (modoCero() === "30s" && E.cero === null && E.escalon === 0 && ahora - E.tEscalon >= CERO_S) ponerCero(ahora);
   if (E.inicio !== null && E.escalon >= 0 && E.escalon < PROGRAMA.length) {
     E.filas.push([Math.round(ahora - E.inicio), PROGRAMA[E.escalon], mmAbs]);
     guardar();
@@ -190,11 +193,8 @@ function flechaRel(mmAbs){ return E.cero === null ? 0 : mmAbs - E.cero; }
 function irAEscalon(k){
   const ahora = Date.now() / 1000;
   if (E.inicio === null) E.inicio = ahora;
-  // cero al pulsar el escalón de 5 kg, o al terminar la precarga (última lectura de 5 kg)
-  if (E.cero === null && ultimo !== null) {
-    if (modoCero() === "inicio" && k === 0) E.cero = ultimo;
-    if (modoCero() === "precarga" && E.escalon === 0 && k >= 1) E.cero = ultimo;
-  }
+  // cero a los 30 s del escalón de 5 kg (si se sale antes, al salir), o al terminar la precarga
+  if (E.cero === null && ultimo !== null && E.escalon === 0 && k >= 1) ponerCero(ahora);
   E.escalon = k; E.tEscalon = ahora;
   if (navigator.vibrate) navigator.vibrate(80);
   guardar(); pintar();
@@ -216,10 +216,12 @@ function variacion(){
 function pintar(){
   $("lectura").textContent = ultimo === null ? "––" : fmt(E.cero === null ? ultimo : flechaRel(ultimo), 3);
   $("estado").textContent = E.cero === null ? "mm · lectura absoluta (sin cero)" : "mm · flecha desde el cero" + (E.perdidas ? " · " + E.perdidas + " s perdidos" : "");
-  const cuando = modoCero() === "inicio" ? "al pulsar Empezar (5 kg)" : "al pasar de 5 a 15 kg";
-  $("avisoCero").textContent = E.cero === null
-    ? "Cero pendiente: se pondrá " + cuando
-    : "Cero puesto " + (modoCero() === "inicio" ? "al empezar el escalón de 5 kg" : "al acabar la precarga") + " (" + fmt(E.cero, 3) + " mm absolutos)";
+  let pendiente;
+  if (modoCero() === "precarga") pendiente = "Cero pendiente: se pondrá al pasar de 5 a 15 kg";
+  else if (E.escalon === 0) pendiente = "Poniendo cero en " + Math.max(0, Math.ceil(CERO_S - (Date.now()/1000 - E.tEscalon))) + " s…";
+  else pendiente = "Cero pendiente: se pondrá a los " + CERO_S + " s de colgar 5 kg";
+  $("avisoCero").textContent = E.cero === null ? pendiente
+    : "✓ Cero puesto " + (modoCero() === "30s" ? "a los " + CERO_S + " s del escalón de 5 kg" : "al acabar la precarga");
   $("avisoCero").style.color = E.cero === null ? "var(--ambar)" : "var(--verde)";
   const enCurso = E.escalon >= 0 && E.escalon < PROGRAMA.length;
   $("dCarga").textContent = enCurso ? PROGRAMA[E.escalon] : "–";
@@ -234,7 +236,7 @@ function pintar(){
 
   const g = $("grande");
   g.disabled = ultimo === null || E.escalon >= PROGRAMA.length;
-  if (E.escalon < 0) g.textContent = "Empezar: colgar 5 kg" + (modoCero() === "inicio" ? " y poner cero" : "");
+  if (E.escalon < 0) g.textContent = "Empezar: colgar 5 kg";
   else if (E.escalon < PROGRAMA.length - 1) g.textContent = "Siguiente: " + PROGRAMA[E.escalon+1] + " kg" + (estable ? " ✓" : "");
   else if (E.escalon === PROGRAMA.length - 1) g.textContent = "Terminar ensayo";
   else g.textContent = "Ensayo terminado";
@@ -283,7 +285,7 @@ function texto(){
   const zona = $("zona").value || "1", loc = $("local").value || "";
   const L = ["# Zona " + zona + ": " + loc,
     "# Captador de flecha propio (" + (info || "sin INFO") + "); carga marcada a mano en el móvil",
-    "# Cero de deformación " + (modoCero() === "inicio" ? "al empezar el escalón de 5 kg" : "al finalizar la precarga de 5 kg") + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""),
+    "# Cero de deformación " + (modoCero() === "30s" ? "a los " + CERO_S + " s de empezar el escalón de 5 kg" : "al finalizar la precarga de 5 kg") + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""),
     "Tiempo_s;Fuerza_kg;Deformacion_mm"];
   const cero = E.cero === null ? 0 : E.cero;
   for (const [t, kg, mm] of E.filas) {
@@ -291,8 +293,12 @@ function texto(){
   }
   return L.join("\r\n") + "\r\n";
 }
-// Con el cero al acabar la precarga, durante ella la flecha se exporta a 0, como el DATALOG.
-function precarga(t){ if (modoCero() === "inicio") return false; const p = E.filas.find(r => r[1] !== 5); return p ? t < p[0] : true; }
+// Antes de poner el cero la flecha se exporta a 0, como el DATALOG.
+function precarga(t){
+  if (E.tCero !== undefined && E.tCero !== null) return t < E.tCero;
+  if (modoCero() !== "precarga") return false;
+  const p = E.filas.find(r => r[1] !== 5); return p ? t < p[0] : true;
+}
 
 $("bExportar").onclick = async () => {
   const nombre = nombreFichero(), blob = new Blob([texto()], {type:"text/plain"});
