@@ -36,6 +36,9 @@ button:disabled{opacity:.4}
 #lectura{font-size:64px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:-1px}
 #estado{text-align:center;font-size:14px;color:var(--gris)}
 #panel{transition:background .3s}
+#ruidoCaja{margin-top:10px;border-radius:10px;padding:8px 10px;color:#fff;font-weight:700;text-align:center;background:var(--gris);transition:background .3s}
+#ruidoBarra{height:10px;border-radius:5px;background:rgba(255,255,255,.35);margin-top:6px;overflow:hidden}
+#ruidoNivel{height:100%;width:0;background:#fff;transition:width .3s}
 #panel.estable{background:#dcfce7}#panel.moviendo{background:#fef3c7}
 @media (prefers-color-scheme:dark){#panel.estable{background:#12351f}#panel.moviendo{background:#3a2c0b}}
 .escalones{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
@@ -77,10 +80,11 @@ canvas{width:100%;height:180px;display:block}
   <div id="lectura">––</div>
   <div id="estado">mm · esperando lecturas</div>
   <div id="avisoCero" style="text-align:center;font-size:15px;font-weight:600;margin-top:4px"></div>
+  <div id="ruidoCaja"><span id="ruidoTxt">Ruido: –</span><div id="ruidoBarra"><div id="ruidoNivel"></div></div></div>
   <div class="datos" style="margin-top:8px">
     <div><b id="dCarga">–</b><span>carga kg</span></div>
     <div><b id="dTiempo">–</b><span>en escalón</span></div>
-    <div><b id="dVar">–</b><span>Δ 30 s (mm)</span></div>
+    <div><b id="dVar">–</b><span>ruido 30 s (mm)</span></div>
   </div>
 </div>
 
@@ -93,6 +97,11 @@ canvas{width:100%;height:180px;display:block}
       <option value="30s">A los 30 s de empezar el escalón de 5 kg</option>
       <option value="precarga">Al acabar la precarga (paso de 5 a 15 kg)</option>
     </select></div>
+  <div class="fila" style="margin-top:8px">
+    <div class="campo"><label for="umbral">Ruido máx. para pasar (mm)</label><input id="umbral" inputmode="decimal" value="0,02"></div>
+    <div class="campo"><label for="espera">Si no se estabiliza, pasar a los (min)</label><input id="espera" inputmode="decimal" value="5"></div>
+  </div>
+  <p class="aviso" id="avisoPaso"></p>
 </div>
 
 <div class="tarjeta"><canvas id="grafica"></canvas></div>
@@ -109,7 +118,12 @@ const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const PROGRAMA = [5, 15, 25, 15, 5];
-const VENTANA_S = 30, UMBRAL_MM = 0.02, DURACION_S = 180;
+const VENTANA_S = 30, DURACION_S = 180;
+// Para pasar de escalón: ruido (máx − mín de los últimos 30 s) <= umbral, o que
+// el escalón dure ya la espera máxima. Se guardan en el móvil entre ensayos.
+let AJ = {umbral: 0.02, espera: 5};
+try { Object.assign(AJ, JSON.parse(localStorage.getItem("flechaAjustes")) || {}); } catch(e){}
+function num(t){ const x = parseFloat(String(t).replace(",", ".")); return isFinite(x) && x > 0 ? x : null; }
 const $ = id => document.getElementById(id);
 
 // ---------------------------------------------------------------- estado
@@ -192,6 +206,11 @@ function flechaRel(mmAbs){ return E.cero === null ? 0 : mmAbs - E.cero; }
 
 function irAEscalon(k){
   const ahora = Date.now() / 1000;
+  if (E.escalon >= 0 && k > E.escalon) {
+    const p = puedePasar();
+    if (!p.ok) { alert("Todavía no: " + p.motivo); return; }
+    if (p.forzado) (E.forzados = E.forzados || []).push([PROGRAMA[E.escalon], E.escalon + 1, p.ruido]);
+  }
   if (E.inicio === null) E.inicio = ahora;
   // cero a los 30 s del escalón de 5 kg (si se sale antes, al salir), o al terminar la precarga
   if (E.cero === null && ultimo !== null && E.escalon === 0 && k >= 1) ponerCero(ahora);
@@ -210,7 +229,18 @@ function variacion(){
   const tf = f[f.length - 1][0];
   const dentro = f.filter(r => r[0] >= tf - VENTANA_S);
   if (tf - dentro[0][0] < VENTANA_S - 1) return null;
-  return Math.abs(dentro[dentro.length - 1][2] - dentro[0][2]);
+  const v = dentro.map(r => r[2]);
+  return Math.max(...v) - Math.min(...v);
+}
+function puedePasar(){
+  if (E.escalon < 0 || E.escalon >= PROGRAMA.length) return {ok:true};
+  const dt = Date.now()/1000 - E.tEscalon, r = variacion(), esperaS = AJ.espera * 60;
+  if (r !== null && r <= AJ.umbral) return {ok:true, ruido:r};
+  if (dt >= esperaS) return {ok:true, forzado:true, ruido:r};
+  const falta = Math.ceil(esperaS - dt), mmss = Math.floor(falta/60) + ":" + String(falta%60).padStart(2,"0");
+  return {ok:false, falta: mmss, motivo: r === null
+    ? "midiendo el ruido (hacen falta 30 s de lecturas)"
+    : "oscila " + fmt(r,3) + " mm en 30 s, más de " + fmt(AJ.umbral,3) + " mm. Se podrá pasar igualmente en " + mmss};
 }
 
 function pintar(){
@@ -229,19 +259,32 @@ function pintar(){
   $("dTiempo").textContent = dt === null ? "–" : Math.floor(dt/60) + ":" + String(dt%60).padStart(2,"0");
   const v = enCurso ? variacion() : null;
   $("dVar").textContent = v === null ? "–" : fmt(v, 3);
-  const estable = v !== null && v <= UMBRAL_MM && dt >= DURACION_S;
+  // Semáforo del ruido: verde <= umbral, ámbar hasta 3 veces el umbral, rojo por encima.
+  let col = "var(--gris)", txt = enCurso ? "Ruido: midiendo…" : "Ruido: –";
+  if (v !== null) {
+    const n = v / AJ.umbral;
+    col = n <= 1 ? "var(--verde)" : n <= 3 ? "var(--ambar)" : "var(--rojo)";
+    txt = (n <= 1 ? "ESTABLE" : n <= 3 ? "CASI ESTABLE" : "OSCILA") + " · " + fmt(v, 3) + " mm en 30 s (máx. " + fmt(AJ.umbral, 3) + ")";
+    $("ruidoNivel").style.width = Math.min(100, 100 * n / 5) + "%";
+  } else $("ruidoNivel").style.width = "0";
+  $("ruidoCaja").style.background = col; $("ruidoTxt").textContent = txt;
+  const estable = v !== null && v <= AJ.umbral && dt >= DURACION_S;
+  const pp = enCurso ? puedePasar() : {ok:true};
   $("panel").className = !enCurso ? "" : (estable ? "estable" : "moviendo");
   if (estable && !pintar.avisado) { pintar.avisado = true; if (navigator.vibrate) navigator.vibrate([200,100,200]); }
   if (!estable) pintar.avisado = false;
 
   const g = $("grande");
-  g.disabled = ultimo === null || E.escalon >= PROGRAMA.length;
+  g.disabled = ultimo === null || E.escalon >= PROGRAMA.length || !pp.ok;
   if (E.escalon < 0) g.textContent = "Empezar: colgar 5 kg";
-  else if (E.escalon < PROGRAMA.length - 1) g.textContent = "Siguiente: " + PROGRAMA[E.escalon+1] + " kg" + (estable ? " ✓" : "");
-  else if (E.escalon === PROGRAMA.length - 1) g.textContent = "Terminar ensayo";
+  else if (!pp.ok) g.textContent = "Esperando estabilidad…";
+  else if (E.escalon < PROGRAMA.length - 1) g.textContent = "Siguiente: " + PROGRAMA[E.escalon+1] + " kg" + (pp.forzado ? " (sin estabilizar)" : estable ? " ✓" : "");
+  else if (E.escalon === PROGRAMA.length - 1) g.textContent = "Terminar ensayo" + (pp.forzado ? " (sin estabilizar)" : "");
   else g.textContent = "Ensayo terminado";
   const bs = $("escalones").children;
   for (let k = 0; k < bs.length; k++) bs[k].className = k === E.escalon ? "actual" : (k < E.escalon ? "hecho" : "");
+  $("avisoPaso").textContent = !enCurso ? "" : !pp.ok ? "No se puede pasar: " + pp.motivo + "."
+    : pp.forzado ? "No se ha estabilizado en " + fmt(AJ.espera, AJ.espera % 1 ? 1 : 0) + " min: se puede pasar, y quedará anotado en el TXT." : "";
   $("bExportar").disabled = E.filas.length === 0;
   $("bAbortar").disabled = E.escalon < 0 && E.filas.length === 0;
   $("modoCero").value = modoCero(); $("modoCero").disabled = E.escalon >= 0;
@@ -286,7 +329,10 @@ function texto(){
   const L = ["# Zona " + zona + ": " + loc,
     "# Captador de flecha propio (" + (info || "sin INFO") + "); carga marcada a mano en el móvil",
     "# Cero de deformación " + (modoCero() === "30s" ? "a los " + CERO_S + " s de empezar el escalón de 5 kg" : "al finalizar la precarga de 5 kg") + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""),
-    "Tiempo_s;Fuerza_kg;Deformacion_mm"];
+    "# Para pasar de escalón: ruido en 30 s <= " + fmt(AJ.umbral,3) + " mm, o " + fmt(AJ.espera, AJ.espera % 1 ? 1 : 0) + " min sin estabilizar"];
+  for (const [kg, n, r] of (E.forzados || []))
+    L.push("# Escalón " + n + " (" + kg + " kg) pasado sin estabilizar" + (r === null || r === undefined ? "" : ": ruido en 30 s " + fmt(r,3) + " mm"));
+  L.push("Tiempo_s;Fuerza_kg;Deformacion_mm");
   const cero = E.cero === null ? 0 : E.cero;
   for (const [t, kg, mm] of E.filas) {
     L.push(t + ";" + kg + ";" + fmt(precarga(t) ? 0 : mm - cero, 3));
@@ -320,6 +366,13 @@ $("bAbortar").onclick = () => {
   guardar(); pintar();
 };
 ["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
+$("umbral").value = fmt(AJ.umbral, 3).replace(/0+$/,"").replace(/,$/,""); $("espera").value = fmt(AJ.espera, AJ.espera % 1 ? 1 : 0);
+["umbral","espera"].forEach(id => $(id).addEventListener("change", () => {
+  const x = num($(id).value); if (x !== null) AJ[id] = x;
+  $(id).value = fmt(AJ[id], id === "umbral" ? 3 : AJ[id] % 1 ? 1 : 0);
+  try { localStorage.setItem("flechaAjustes", JSON.stringify(AJ)); } catch(e){}
+  pintar();
+}));
 $("modoCero").addEventListener("change", () => { if (E.escalon < 0) { E.modoCero = $("modoCero").value; guardar(); } });
 
 // ------------------------------------------------------------------ demo
