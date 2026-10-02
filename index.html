@@ -99,6 +99,7 @@ canvas{width:100%;height:180px;display:block}
 
 <div id="barra">
   <button class="sec" id="bExportar" disabled>Exportar TXT</button>
+  <button class="sec" id="bAbortar">Abortar y repetir</button>
   <button class="rojo" id="bNuevo">Nueva zona</button>
 </div>
 
@@ -240,6 +241,7 @@ function pintar(){
   const bs = $("escalones").children;
   for (let k = 0; k < bs.length; k++) bs[k].className = k === E.escalon ? "actual" : (k < E.escalon ? "hecho" : "");
   $("bExportar").disabled = E.filas.length === 0;
+  $("bAbortar").disabled = E.escalon < 0 && E.filas.length === 0;
   $("modoCero").value = modoCero(); $("modoCero").disabled = E.escalon >= 0;
   grafica();
 }
@@ -303,6 +305,12 @@ $("bExportar").onclick = async () => {
 $("bNuevo").onclick = () => {
   if (E.filas.length && !confirm("Se borra el registro de esta zona del móvil. ¿Lo has exportado?")) return;
   E = nuevoEnsayo(); $("zona").value = String((parseInt($("zona").value,10)||0) + 1); $("local").value = "";
+  guardar(); pintar();
+};
+$("bAbortar").onclick = () => {
+  if (E.escalon < 0 && !E.filas.length) return;
+  if (!confirm("Se descarta el ensayo en curso de esta zona y vuelve a empezar desde 5 kg (sin cero). ¿Seguro?")) return;
+  const m = modoCero(); E = nuevoEnsayo(); E.modoCero = m; pintar.avisado = false;
   guardar(); pintar();
 };
 ["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
