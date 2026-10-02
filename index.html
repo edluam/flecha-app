@@ -36,9 +36,13 @@ button:disabled{opacity:.4}
 #lectura{font-size:64px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:-1px}
 #estado{text-align:center;font-size:14px;color:var(--gris)}
 #panel{transition:background .3s}
-#ruidoCaja{margin-top:10px;border-radius:10px;padding:8px 10px;color:#fff;font-weight:700;text-align:center;background:var(--gris);transition:background .3s}
-#ruidoBarra{height:10px;border-radius:5px;background:rgba(255,255,255,.35);margin-top:6px;overflow:hidden}
-#ruidoNivel{height:100%;width:0;background:#fff;transition:width .3s}
+#ruidoCaja{margin-top:10px}
+#ruidoTxt{font-weight:700;text-align:center;font-size:15px}
+#ruidoBarra{position:relative;height:26px;border-radius:8px;background:var(--borde);margin-top:6px;overflow:hidden;border:1px solid var(--borde)}
+#ruidoNivel{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--gris);transition:width .4s,background .4s}
+#ruidoLimite{position:absolute;top:0;bottom:0;width:2px;background:var(--txt);opacity:.7}
+#ruidoEscala{position:relative;height:16px;font-size:11px;color:var(--gris);font-variant-numeric:tabular-nums}
+#ruidoEscala span{position:absolute;transform:translateX(-50%)}
 #panel.estable{background:#dcfce7}#panel.moviendo{background:#fef3c7}
 @media (prefers-color-scheme:dark){#panel.estable{background:#12351f}#panel.moviendo{background:#3a2c0b}}
 .escalones{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
@@ -80,7 +84,11 @@ canvas{width:100%;height:180px;display:block}
   <div id="lectura">––</div>
   <div id="estado">mm · esperando lecturas</div>
   <div id="avisoCero" style="text-align:center;font-size:15px;font-weight:600;margin-top:4px"></div>
-  <div id="ruidoCaja"><span id="ruidoTxt">Ruido: –</span><div id="ruidoBarra"><div id="ruidoNivel"></div></div></div>
+  <div id="ruidoCaja">
+    <div id="ruidoTxt">Ruido: –</div>
+    <div id="ruidoBarra"><div id="ruidoNivel"></div><div id="ruidoLimite"></div></div>
+    <div id="ruidoEscala"></div>
+  </div>
   <div class="datos" style="margin-top:8px">
     <div><b id="dCarga">–</b><span>carga kg</span></div>
     <div><b id="dTiempo">–</b><span>en escalón</span></div>
@@ -98,7 +106,7 @@ canvas{width:100%;height:180px;display:block}
       <option value="precarga">Al acabar la precarga (paso de 5 a 15 kg)</option>
     </select></div>
   <div class="fila" style="margin-top:8px">
-    <div class="campo"><label for="umbral">Ruido máx. para pasar (mm)</label><input id="umbral" inputmode="decimal" value="0,02"></div>
+    <div class="campo"><label for="umbral">Ruido 20 equivale a (mm en 30 s)</label><input id="umbral" inputmode="decimal" value="0,02"></div>
     <div class="campo"><label for="espera">Si no se estabiliza, pasar a los (min)</label><input id="espera" inputmode="decimal" value="5"></div>
   </div>
   <p class="aviso" id="avisoPaso"></p>
@@ -123,6 +131,8 @@ const VENTANA_S = 30, DURACION_S = 180;
 // el escalón dure ya la espera máxima. Se guardan en el móvil entre ensayos.
 let AJ = {umbral: 0.02, espera: 5};
 try { Object.assign(AJ, JSON.parse(localStorage.getItem("flechaAjustes")) || {}); } catch(e){}
+const RUIDO_PASA = 20;   // en la escala 0-100 de la barra, el umbral cae en 20
+function indiceRuido(v){ return Math.min(100, RUIDO_PASA * v / AJ.umbral); }
 function num(t){ const x = parseFloat(String(t).replace(",", ".")); return isFinite(x) && x > 0 ? x : null; }
 const $ = id => document.getElementById(id);
 
@@ -240,7 +250,7 @@ function puedePasar(){
   const falta = Math.ceil(esperaS - dt), mmss = Math.floor(falta/60) + ":" + String(falta%60).padStart(2,"0");
   return {ok:false, falta: mmss, motivo: r === null
     ? "midiendo el ruido (hacen falta 30 s de lecturas)"
-    : "oscila " + fmt(r,3) + " mm en 30 s, más de " + fmt(AJ.umbral,3) + " mm. Se podrá pasar igualmente en " + mmss};
+    : "ruido " + indiceRuido(r).toFixed(0) + ", tiene que bajar a " + RUIDO_PASA + " o menos. Se podrá pasar igualmente en " + mmss};
 }
 
 function pintar(){
@@ -259,15 +269,18 @@ function pintar(){
   $("dTiempo").textContent = dt === null ? "–" : Math.floor(dt/60) + ":" + String(dt%60).padStart(2,"0");
   const v = enCurso ? variacion() : null;
   $("dVar").textContent = v === null ? "–" : fmt(v, 3);
-  // Semáforo del ruido: verde <= umbral, ámbar hasta 3 veces el umbral, rojo por encima.
-  let col = "var(--gris)", txt = enCurso ? "Ruido: midiendo…" : "Ruido: –";
+  // Barra de ruido de 100 a 0: 100 = 5 veces el umbral o más, 20 = el umbral.
+  // Baja según se estabiliza; del rojo pasa al amarillo y, por debajo de 20, al verde.
+  $("ruidoLimite").style.left = RUIDO_PASA + "%";
+  let txt = enCurso ? "Ruido: midiendo (30 s)…" : "Ruido: –", col = "var(--txt)";
   if (v !== null) {
-    const n = v / AJ.umbral;
-    col = n <= 1 ? "var(--verde)" : n <= 3 ? "var(--ambar)" : "var(--rojo)";
-    txt = (n <= 1 ? "ESTABLE" : n <= 3 ? "CASI ESTABLE" : "OSCILA") + " · " + fmt(v, 3) + " mm en 30 s (máx. " + fmt(AJ.umbral, 3) + ")";
-    $("ruidoNivel").style.width = Math.min(100, 100 * n / 5) + "%";
-  } else $("ruidoNivel").style.width = "0";
-  $("ruidoCaja").style.background = col; $("ruidoTxt").textContent = txt;
+    const r = indiceRuido(v);
+    const hue = r <= RUIDO_PASA ? 120 : 60 * (100 - r) / (100 - RUIDO_PASA);   // 100 → rojo, 20 → amarillo
+    const c = r <= RUIDO_PASA ? "var(--verde)" : "hsl(" + hue.toFixed(0) + ",85%,45%)";
+    $("ruidoNivel").style.width = Math.max(2, r) + "%"; $("ruidoNivel").style.background = c; col = c;
+    txt = "Ruido " + r.toFixed(0) + (r <= RUIDO_PASA ? " · ESTABLE" : " · OSCILA") + " (" + fmt(v, 3) + " mm en 30 s)";
+  } else { $("ruidoNivel").style.width = "0"; }
+  $("ruidoTxt").textContent = txt; $("ruidoTxt").style.color = col;
   const estable = v !== null && v <= AJ.umbral && dt >= DURACION_S;
   const pp = enCurso ? puedePasar() : {ok:true};
   $("panel").className = !enCurso ? "" : (estable ? "estable" : "moviendo");
@@ -366,6 +379,7 @@ $("bAbortar").onclick = () => {
   guardar(); pintar();
 };
 ["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
+$("ruidoEscala").innerHTML = [100,80,60,40,20,0].map(n => '<span style="left:' + Math.min(97, Math.max(3, n)) + '%">' + n + '</span>').join("");
 $("umbral").value = fmt(AJ.umbral, 3).replace(/0+$/,"").replace(/,$/,""); $("espera").value = fmt(AJ.espera, AJ.espera % 1 ? 1 : 0);
 ["umbral","espera"].forEach(id => $(id).addEventListener("change", () => {
   const x = num($(id).value); if (x !== null) AJ[id] = x;
