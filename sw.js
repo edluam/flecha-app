@@ -1,5 +1,5 @@
 // Guarda la app en el móvil para que funcione en obra sin internet.
-const CACHE = "flecha-v11";
+const CACHE = "flecha-v12";
 const FICHEROS = ["./", "./index.html", "./manifest.json", "./icono.svg"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FICHEROS))));
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(k => Promise.all(k.filter(n => n !== CACHE).map(n => caches.delete(n))))));

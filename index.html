@@ -80,6 +80,10 @@ canvas{width:100%;height:180px;display:block}
   <div class="fila" style="margin-top:6px">
     <div class="campo" style="flex-basis:100%"><label>Localización</label><input id="local" placeholder="Sala de espera"></div>
   </div>
+  <div class="fila" style="margin-top:8px">
+    <button class="sec" id="bCabecera">Guardar datos</button>
+    <span id="cabEstado" style="font-size:14px"></span>
+  </div>
 </div>
 
 <div class="tarjeta" id="panel">
@@ -382,7 +386,7 @@ $("bExportar").onclick = async () => {
 $("bNuevo").onclick = () => {
   if (E.filas.length && !confirm("Se borra el registro de esta zona del móvil. ¿Lo has exportado?")) return;
   E = nuevoEnsayo(); $("zona").value = String((parseInt($("zona").value,10)||0) + 1); $("local").value = "";
-  guardar(); pintar();
+  guardar(); cabGuardada = valorCab(); estadoCab(); pintar();
 };
 $("bAbortar").onclick = () => {
   if (E.escalon < 0 && !E.filas.length) return;
@@ -391,6 +395,19 @@ $("bAbortar").onclick = () => {
   guardar(); pintar();
 };
 ["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
+// Botón «Guardar datos»: confirma que el nº de obra, la zona y la localización
+// están guardados (y por tanto irán al TXT). Avisa si se ha tocado algo sin guardar.
+let cabGuardada = "";
+const valorCab = () => ["obra","zona","local"].map(id => $(id).value.trim()).join("|");
+function estadoCab(){
+  const ok = valorCab() === cabGuardada;
+  $("cabEstado").textContent = ok ? "✓ Guardados" : "Sin guardar";
+  $("cabEstado").style.color = ok ? "var(--verde)" : "var(--ambar)";
+  $("bCabecera").disabled = ok;
+}
+$("bCabecera").onclick = () => { guardar(); cabGuardada = valorCab(); estadoCab(); };
+["obra","zona","local"].forEach(id => $(id).addEventListener("input", estadoCab));
+setTimeout(() => { cabGuardada = valorCab(); estadoCab(); }, 50);
 $("ruidoEscala").innerHTML = [100,80,60,40,20,0].map(n => '<span style="left:' + Math.min(97, Math.max(3, n)) + '%">' + n + '</span>').join("");
 $("umbral").value = fmt(AJ.umbral, 3).replace(/0+$/,"").replace(/,$/,""); $("espera").value = fmt(AJ.espera, AJ.espera % 1 ? 1 : 0);
 ["umbral","espera"].forEach(id => $(id).addEventListener("change", () => {
