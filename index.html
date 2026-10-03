@@ -170,8 +170,19 @@ async function enlazar(disp){
   tx.addEventListener("characteristicvaluechanged", ev => recibir(new TextDecoder().decode(ev.target.value)));
   await tx.startNotifications();
   conexion("Conectado a " + disp.name);
+  pantallaEncendida();
   pedirInfo();
 }
+// Mantiene la pantalla encendida mientras la app está abierta: si se apaga,
+// Chrome corta el Bluetooth y se pierden lecturas. El móvil suelta el bloqueo
+// al salir de la app, así que se vuelve a pedir al volver a ella.
+let bloqueo = null;
+async function pantallaEncendida(){
+  if (!("wakeLock" in navigator) || bloqueo) return;
+  try { bloqueo = await navigator.wakeLock.request("screen");
+        bloqueo.addEventListener("release", () => { bloqueo = null; }); } catch(e){}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && rx) pantallaEncendida(); });
 // Pide los datos del captador (versión, calibración, signo) hasta que llegan:
 // a veces la primera petición se pierde justo al conectar.
 async function pedirInfo(){
