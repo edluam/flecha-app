@@ -166,7 +166,18 @@ async function enlazar(disp){
   tx.addEventListener("characteristicvaluechanged", ev => recibir(new TextDecoder().decode(ev.target.value)));
   await tx.startNotifications();
   conexion("Conectado a " + disp.name);
-  try { await rx.writeValue(new TextEncoder().encode("INFO\n")); } catch(e){}
+  pedirInfo();
+}
+// Pide los datos del captador (versión, calibración, signo) hasta que llegan:
+// a veces la primera petición se pierde justo al conectar.
+async function pedirInfo(){
+  const antes = info;
+  info = "";
+  for (let i = 0; i < 6 && !info; i++) {
+    try { await rx.writeValue(new TextEncoder().encode("INFO\n")); } catch(e){}
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  if (!info) info = antes;
 }
 async function reconectar(disp){
   for (let i = 0; i < 30; i++) {
