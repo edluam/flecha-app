@@ -74,7 +74,7 @@ canvas{width:100%;height:180px;display:block}
 
 <div class="tarjeta">
   <div class="fila">
-    <div class="campo"><label>Obra</label><input id="obra" inputmode="numeric"></div>
+    <div class="campo"><label>Nº de obra</label><input id="obra" inputmode="numeric"></div>
     <div class="campo"><label>Zona nº</label><input id="zona" inputmode="numeric" value="1"></div>
   </div>
   <div class="fila" style="margin-top:6px">
@@ -336,10 +336,14 @@ function nombreFichero(){
 }
 function texto(){
   const zona = $("zona").value || "1", loc = $("local").value || "";
-  const L = ["# Zona " + zona + ": " + loc,
-    "# Captador de flecha AlchiDat System ADS-T100 (" + (info || "sin INFO") + "); carga marcada a mano en el móvil",
-    "# Cero de deformación " + (modoCero() === "30s" ? "a los " + CERO_S + " s de empezar el escalón de 5 kg" : "al finalizar la precarga de 5 kg") + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""),
-    "# Para pasar de escalón: ruido en 30 s <= " + fmt(AJ.umbral,3) + " mm, o " + fmt(AJ.espera, AJ.espera % 1 ? 1 : 0) + " min sin estabilizar"];
+  const L = ["# Zona " + zona + ": " + loc];
+  if ($("obra").value) L.push("# Obra nº " + $("obra").value);
+  L.push(
+    "# Captador de flecha AlchiDat System ADS-T100 (" + (info || "sin INFO") + "); carga marcada a mano en el móvil");
+  L.push(
+    "# Cero de deformación " + (modoCero() === "30s" ? "a los " + CERO_S + " s de empezar el escalón de 5 kg" : "al finalizar la precarga de 5 kg") + (E.perdidas ? "; " + E.perdidas + " s sin lectura" : ""));
+  L.push(
+    "# Para pasar de escalón: ruido en 30 s <= " + fmt(AJ.umbral,3) + " mm, o " + fmt(AJ.espera, AJ.espera % 1 ? 1 : 0) + " min sin estabilizar");
   for (const [kg, n, r] of (E.forzados || []))
     L.push("# Escalón " + n + " (" + kg + " kg) pasado sin estabilizar" + (r === null || r === undefined ? "" : ": ruido en 30 s " + fmt(r,3) + " mm"));
   L.push("Tiempo_s;Fuerza_kg;Deformacion_mm");
