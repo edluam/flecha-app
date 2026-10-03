@@ -129,7 +129,7 @@ const PROGRAMA = [5, 15, 25, 15, 5];
 const VENTANA_S = 30, DURACION_S = 180;
 // Para pasar de escalón: ruido (máx − mín de los últimos 30 s) <= umbral, o que
 // el escalón dure ya la espera máxima. Se guardan en el móvil entre ensayos.
-let AJ = {umbral: 0.02, espera: 5};
+let AJ = {umbral: 0.02, espera: 5, modoCero: "30s"};
 try { Object.assign(AJ, JSON.parse(localStorage.getItem("flechaAjustes")) || {}); } catch(e){}
 const RUIDO_PASA = 20;   // en la escala 0-100 de la barra, el umbral cae en 20
 function indiceRuido(v){ return Math.min(100, RUIDO_PASA * v / AJ.umbral); }
@@ -139,9 +139,10 @@ const $ = id => document.getElementById(id);
 // ---------------------------------------------------------------- estado
 let E = cargar() || nuevoEnsayo();
 let ultimo = null, rx = null, bufer = "", info = "";
-function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null, modoCero:"30s"}; }
+function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null, modoCero: AJ.modoCero || "30s"}; }
 const CERO_S = 30;   // el cero automático se pone a los 30 s de empezar el escalón de 5 kg
-function modoCero(){ const m = E.modoCero || "precarga"; return m === "inicio" ? "30s" : m; }   // registros guardados con versiones anteriores
+// Los registros de versiones anteriores no traen modo: se usa el elegido en los ajustes.
+function modoCero(){ const m = E.modoCero || AJ.modoCero || "30s"; return m === "inicio" ? "30s" : m; }
 function ponerCero(ahora){ E.cero = ultimo; E.tCero = Math.round(ahora - E.inicio); if (navigator.vibrate) navigator.vibrate([100,60,100]); }
 function guardar(){ try{ localStorage.setItem("flecha", JSON.stringify({E, obra:$("obra").value, zona:$("zona").value, local:$("local").value})); }catch(e){} }
 function cargar(){
@@ -375,7 +376,7 @@ $("bNuevo").onclick = () => {
 $("bAbortar").onclick = () => {
   if (E.escalon < 0 && !E.filas.length) return;
   if (!confirm("Se descarta el ensayo en curso de esta zona y vuelve a empezar desde 5 kg (sin cero). ¿Seguro?")) return;
-  const m = modoCero(); E = nuevoEnsayo(); E.modoCero = m; pintar.avisado = false;
+  E = nuevoEnsayo(); pintar.avisado = false;
   guardar(); pintar();
 };
 ["obra","zona","local"].forEach(id => $(id).addEventListener("change", guardar));
@@ -387,7 +388,12 @@ $("umbral").value = fmt(AJ.umbral, 3).replace(/0+$/,"").replace(/,$/,""); $("esp
   try { localStorage.setItem("flechaAjustes", JSON.stringify(AJ)); } catch(e){}
   pintar();
 }));
-$("modoCero").addEventListener("change", () => { if (E.escalon < 0) { E.modoCero = $("modoCero").value; guardar(); } });
+$("modoCero").addEventListener("change", () => {
+  if (E.escalon >= 0) return;
+  E.modoCero = AJ.modoCero = $("modoCero").value; guardar();
+  try { localStorage.setItem("flechaAjustes", JSON.stringify(AJ)); } catch(e){}
+  pintar();
+});
 
 // ------------------------------------------------------------------ demo
 function demo(){
