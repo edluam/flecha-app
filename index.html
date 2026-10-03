@@ -100,11 +100,6 @@ canvas{width:100%;height:180px;display:block}
   <label>Escalones (toca uno para saltar a él)</label>
   <div class="escalones" id="escalones"></div>
   <button id="grande" disabled>Empezar: colgar 5 kg</button>
-  <div style="margin-top:10px"><label for="modoCero">Cero de flecha</label>
-    <select id="modoCero">
-      <option value="30s">A los 30 s de empezar el escalón de 5 kg</option>
-      <option value="precarga">Al acabar la precarga (paso de 5 a 15 kg)</option>
-    </select></div>
   <div class="fila" style="margin-top:8px">
     <div class="campo"><label for="umbral">Ruido 20 equivale a (mm en 30 s)</label><input id="umbral" inputmode="decimal" value="0,02"></div>
     <div class="campo"><label for="espera">Si no se estabiliza, pasar a los (min)</label><input id="espera" inputmode="decimal" value="5"></div>
@@ -141,8 +136,8 @@ let E = cargar() || nuevoEnsayo();
 let ultimo = null, rx = null, bufer = "", info = "";
 function nuevoEnsayo(){ return {inicio:null, escalon:-1, tEscalon:null, cero:null, filas:[], perdidas:0, ultSeq:null, modoCero: AJ.modoCero || "30s"}; }
 const CERO_S = 30;   // el cero automático se pone a los 30 s de empezar el escalón de 5 kg
-// Los registros de versiones anteriores no traen modo: se usa el elegido en los ajustes.
-function modoCero(){ const m = E.modoCero || AJ.modoCero || "30s"; return m === "inicio" ? "30s" : m; }
+// El cero se pone siempre a los 30 s de empezar el escalón de 5 kg (también en registros antiguos).
+function modoCero(){ return "30s"; }
 function ponerCero(ahora){ E.cero = ultimo; E.tCero = Math.round(ahora - E.inicio); if (navigator.vibrate) navigator.vibrate([100,60,100]); }
 function guardar(){ try{ localStorage.setItem("flecha", JSON.stringify({E, obra:$("obra").value, zona:$("zona").value, local:$("local").value})); }catch(e){} }
 function cargar(){
@@ -301,7 +296,6 @@ function pintar(){
     : pp.forzado ? "No se ha estabilizado en " + fmt(AJ.espera, AJ.espera % 1 ? 1 : 0) + " min: se puede pasar, y quedará anotado en el TXT." : "";
   $("bExportar").disabled = E.filas.length === 0;
   $("bAbortar").disabled = E.escalon < 0 && E.filas.length === 0;
-  $("modoCero").value = modoCero(); $("modoCero").disabled = E.escalon >= 0;
   grafica();
 }
 function fmt(x, d){ return x.toFixed(d).replace(".", ","); }
@@ -388,12 +382,6 @@ $("umbral").value = fmt(AJ.umbral, 3).replace(/0+$/,"").replace(/,$/,""); $("esp
   try { localStorage.setItem("flechaAjustes", JSON.stringify(AJ)); } catch(e){}
   pintar();
 }));
-$("modoCero").addEventListener("change", () => {
-  if (E.escalon >= 0) return;
-  E.modoCero = AJ.modoCero = $("modoCero").value; guardar();
-  try { localStorage.setItem("flechaAjustes", JSON.stringify(AJ)); } catch(e){}
-  pintar();
-});
 
 // ------------------------------------------------------------------ demo
 function demo(){
